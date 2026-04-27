@@ -1,0 +1,43 @@
+{
+  "name": "hive-mcp-secrets",
+  "version": "1.0.0",
+  "description": "Encrypted secret store for the A2A network. AES-256-GCM at rest, agent-DID-scoped namespaces, audit log, x402 USDC settlement on Base. MCP 2024-11-05. Inbound only.",
+  "type": "module",
+  "main": "server.js",
+  "bin": {
+    "hive-mcp-secrets": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "mcp",
+    "hive",
+    "secrets",
+    "encryption",
+    "aes-256-gcm",
+    "did",
+    "x402",
+    "402",
+    "ai-agents",
+    "a2a",
+    "usdc",
+    "base-l2"
+  ],
+  "author": "Steve Rotzin <steve@thehiveryiq.com> (https://www.thehiveryiq.com)",
+  "license": "MIT",
+  "homepage": "https://github.com/srotzin/hive-mcp-secrets",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/srotzin/hive-mcp-secrets"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "ethers": "^6.13.4",
+    "express": "^4.19.2"
+  }
+}

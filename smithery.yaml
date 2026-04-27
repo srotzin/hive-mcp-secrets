@@ -1,0 +1,170 @@
+# Smithery Registry — hive-mcp-secrets
+# https://smithery.ai
+
+startCommand:
+  type: http
+  configSchema:
+    type: object
+    properties: {}
+    required: []
+  url: https://hive-mcp-secrets.onrender.com/mcp
+
+name: hive-mcp-secrets
+displayName: hive-mcp-secrets — Encrypted secret store for the A2A network
+version: "1.0.0"
+description: >
+  Encrypted secret store for the A2A network. AES-256-GCM at rest under an
+  operator-held master key, agent-DID-scoped namespaces (caller can only
+  see and write its own namespace), and a per-namespace audit log. x402
+  USDC settlement on Base L2. $0.002 per secrets_get, $0.005 per
+  secrets_put, $0.002 per secrets_audit, list is free. Inbound only. Real
+  rails — actual SQLite, ethers signature verification, Base RPC reads,
+  node:crypto AES-256-GCM with auth-tag verification on every read.
+
+author:
+  name: Steve Rotzin
+  email: steve@thehiveryiq.com
+  url: https://www.thehiveryiq.com
+
+license: MIT
+homepage: https://github.com/srotzin/hive-mcp-secrets
+repository:
+  type: git
+  url: https://github.com/srotzin/hive-mcp-secrets
+
+transport: streamable-http
+endpoint: https://hive-mcp-secrets.onrender.com/mcp
+protocol: "2024-11-05"
+
+categories:
+  - developer-tools
+  - agent-to-agent
+  - security
+  - secrets-management
+  - web3
+
+tags:
+  - mcp
+  - hive
+  - secrets
+  - encryption
+  - aes-256-gcm
+  - did
+  - x402
+  - 402
+  - ai-agents
+  - a2a
+  - usdc
+  - base-l2
+
+tools:
+  - name: secrets_get
+    description: >
+      Read and decrypt a secret by namespace and key. Caller must own the
+      namespace (caller_did === namespace). Charges $0.002 USDC on Base.
+    inputs:
+      - name: namespace
+        type: string
+        required: true
+      - name: key
+        type: string
+        required: true
+      - name: caller_did
+        type: string
+        required: true
+      - name: tx_hash
+        type: string
+        required: false
+        description: "Base USDC tx hash that paid the asking amount to the W1 wallet"
+  - name: secrets_put
+    description: >
+      Encrypt and store a secret value at (namespace, key). Overwrites the
+      previous value if present and bumps version. Charges $0.005 USDC on
+      Base. Returns 503 if SECRETS_MASTER_KEY is not configured on the
+      server.
+    inputs:
+      - name: namespace
+        type: string
+        required: true
+      - name: key
+        type: string
+        required: true
+      - name: value
+        type: string
+        required: true
+      - name: caller_did
+        type: string
+        required: true
+      - name: tx_hash
+        type: string
+        required: false
+  - name: secrets_list
+    description: >
+      List keys in a namespace. Read-only, no charge. Caller must own the
+      namespace.
+    inputs:
+      - name: namespace
+        type: string
+        required: true
+      - name: caller_did
+        type: string
+        required: true
+  - name: secrets_audit
+    description: >
+      Read the audit log for a namespace. Returns the most recent entries
+      within an optional time window. Charges $0.002 USDC on Base.
+    inputs:
+      - name: namespace
+        type: string
+        required: true
+      - name: caller_did
+        type: string
+        required: true
+      - name: since_ms
+        type: number
+        required: false
+      - name: until_ms
+        type: number
+        required: false
+      - name: limit
+        type: number
+        required: false
+      - name: tx_hash
+        type: string
+        required: false
+
+runtime:
+  type: node
+  version: ">=18"
+  command: node server.js
+  env:
+    - name: PORT
+      default: "3000"
+      required: false
+    - name: ENABLE
+      default: "true"
+      required: false
+    - name: WALLET_ADDRESS
+      default: "0x15184bf50b3d3f52b60434f8942b7d52f2eb436e"
+      required: false
+    - name: BASE_RPC_URL
+      default: "https://mainnet.base.org"
+      required: false
+    - name: VERIFY_ONCHAIN
+      default: "true"
+      required: false
+    - name: MAX_KEYS_PER_NAMESPACE
+      default: "1000"
+      required: false
+    - name: MAX_VALUE_BYTES
+      default: "65536"
+      required: false
+    - name: DB_PATH
+      default: "/tmp/secrets.db"
+      required: false
+    - name: SECRETS_MASTER_KEY
+      required: true
+      description: >
+        AES-256 master key. 64-char hex, base64-encoded 32 bytes, or any
+        passphrase (will be SHA-256 hashed to 32 bytes). NEVER committed.
+        Without it, writes return 503.
