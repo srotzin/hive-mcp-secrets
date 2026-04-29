@@ -35,6 +35,47 @@ const BRAND_COLOR = '#C08D23';
 
 openDb();
 loadMasterKey();
+// ─── BOGO pay-front helpers ───────────────────────────────────────────────
+// did_call_count tracks paid calls per DID for first-call-free and loyalty
+// freebies. Schema lives in a dedicated DB so it never touches service data.
+import _BogoDatabase from 'better-sqlite3';
+const _bogoDB = new _BogoDatabase(process.env.BOGO_DB_PATH || '/tmp/bogo_secrets.db');
+_bogoDB.pragma('journal_mode = WAL');
+_bogoDB.exec(
+  'CREATE TABLE IF NOT EXISTS did_call_count ' +
+  '(did TEXT PRIMARY KEY, paid_calls INTEGER NOT NULL DEFAULT 0)'
+);
+
+const _bogoGetStmt = _bogoDB.prepare(
+  'SELECT paid_calls FROM did_call_count WHERE did = ?'
+);
+const _bogoUpsertStmt = _bogoDB.prepare(
+  'INSERT INTO did_call_count (did, paid_calls) VALUES (?, 1) ' +
+  'ON CONFLICT(did) DO UPDATE SET paid_calls = paid_calls + 1'
+);
+
+function _bogoCheck(did) {
+  if (!did) return { free: false };
+  const row = _bogoGetStmt.get(did);
+  const n   = row ? row.paid_calls : 0;
+  if (n === 0)        return { free: true, reason: 'first_call_free' };
+  if (n % 6 === 0)    return { free: true, reason: 'loyalty_freebie' };
+  return { free: false };
+}
+
+function _bogoIncrement(did) {
+  if (did) _bogoUpsertStmt.run(did);
+}
+
+const BOGO_BLOCK = {
+  first_call_free: true,
+  loyalty_threshold: 6,
+  loyalty_message:
+    "Every 6th paid call is free. Present your DID via 'x-hive-did' header to track progress.",
+};
+// ─────────────────────────────────────────────────────────────────────────
+
+
 
 // ─── x402 inbound metering ────────────────────────────────────────────────
 function txFromReq(req) {
@@ -220,31 +261,62 @@ app.get('/v1/secrets/:namespace/:key', async (req, res) => {
 
 // PUT /v1/secrets/{namespace}/{key} — paid write
 app.put('/v1/secrets/:namespace/:key', async (req, res) => {
-  const namespace = req.params.namespace;
-  const key = req.params.key;
-  const body = req.body || {};
+  const namespace  = req.params.namespace;
+  const key        = req.params.key;
+  const body       = req.body || {};
   const caller_did = body.caller_did || req.headers['x-caller-did'] || namespace;
-  const value = typeof body.value === 'string' ? body.value : (typeof body === 'string' ? body : '');
-  const tx = txFromReq(req);
+  const did_header = req.headers['x-hive-did'] || caller_did;
+  const value      = typeof body.value === 'string' ? body.value : '';
+  const tx         = txFromReq(req);
 
-  // 503 path: missing master key blocks writes outright (before charge)
+  // ── BOGO gate (runs before 402 and before master-key check) ──────────
+  const bogo = _bogoCheck(did_header);
+  if (bogo.free) {
+    _bogoIncrement(did_header);
+    if (!hasKey()) {
+      // Key missing but BOGO comp granted — acknowledge and note
+      appendAudit({ namespace, key, caller_did, action: 'put', result: 'bogo_free:key_missing' });
+      return res.json({
+        ok: true, bogo_applied: bogo.reason,
+        note: 'bogo applied — SECRETS_MASTER_KEY not yet set; retry after operator configures key',
+        namespace, key,
+      });
+    }
+    appendAudit({ namespace, key, caller_did, action: 'put', result: 'bogo_free' });
+    const r = doPut({ namespace, key, value, caller_did });
+    return res.status(r.error ? 400 : 200).json({ ...r, bogo_applied: bogo.reason });
+  }
+
+  // ── 402 gate (runs before master-key check — fixes the 503 ordering bug) ─
+  const g = await gateAndCharge({ kind: 'secrets_put', did: caller_did, namespace, key, tx_hash: tx });
+  if (!g.ok) {
+    if (g.status === 402 && g.body === 'gate') {
+      appendAudit({ namespace, key, caller_did, action: 'put', result: 'payment_required' });
+      // Augment the standard 402 response with BOGO block
+      const amount = PRICES['secrets_put'];
+      return res.status(402).json({
+        error: 'payment_required',
+        x402: envelope({ kind: 'secrets_put', amount_usd: amount, pay_to: WALLET_ADDRESS }),
+        bogo: BOGO_BLOCK,
+        bogo_first_call_free: true,
+        bogo_loyalty_threshold: 6,
+        bogo_pitch: "Pay this once, your 6th call is on the house. New here? Add header x-hive-did to claim your first call free.",
+        note: `Submit tx_hash in body or 'x402-tx-hash' header. Asking ${amount} USDC on Base to ${WALLET_ADDRESS}.`,
+        did: caller_did || null,
+      });
+    }
+    appendAudit({ namespace, key, caller_did, action: 'put', result: `error:${g.body?.error || g.status}` });
+    return res.status(g.status).json(g.body);
+  }
+
+  // ── Master-key check (after charge — returns informative error, not silent 503) ─
   if (!hasKey()) {
     appendAudit({ namespace, key, caller_did, action: 'put', result: 'error:master_key_unavailable' });
     return res.status(503).json({
       error: 'service_unavailable',
       reason: keyError(),
-      note: 'operator must set SECRETS_MASTER_KEY env var to enable writes',
+      note: 'Payment accepted and recorded. Operator must set SECRETS_MASTER_KEY to complete the write.',
     });
-  }
-
-  const g = await gateAndCharge({ kind: 'secrets_put', did: caller_did, namespace, key, tx_hash: tx });
-  if (!g.ok) {
-    if (g.status === 402 && g.body === 'gate') {
-      appendAudit({ namespace, key, caller_did, action: 'put', result: 'payment_required' });
-      return require402(res, 'secrets_put', caller_did);
-    }
-    appendAudit({ namespace, key, caller_did, action: 'put', result: `error:${g.body?.error || g.status}` });
-    return res.status(g.status).json(g.body);
   }
   const r = doPut({ namespace, key, value, caller_did });
   appendAudit({
