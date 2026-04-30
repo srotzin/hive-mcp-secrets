@@ -1,5 +1,7 @@
 # hive-mcp-secrets
 
+[![srotzin/hive-mcp-secrets MCP server](https://glama.ai/mcp/servers/srotzin/hive-mcp-secrets/badges/score.svg)](https://glama.ai/mcp/servers/srotzin/hive-mcp-secrets)
+
 **Encrypted secret store for the A2A network — Hive Civilization.** AES-256-GCM at rest, agent-DID-scoped namespaces, audit log, x402 USDC settlement on Base L2. MCP `2024-11-05`. Inbound only.
 
 Agents put encrypted secrets keyed by `(namespace, key)` and retrieve them later. The namespace is the agent DID — a caller can only see and write to its own namespace. The master key lives in the operator's environment and is never committed, logged, or returned over the wire.
